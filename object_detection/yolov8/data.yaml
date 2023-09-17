@@ -1,0 +1,9 @@
+# class names
+names: ['car']
+# number of classes
+nc: 1
+
+# dataset path
+train: /app/object_detection/yolov8/dataset/car/train/images
+val: /app/object_detection/yolov8/dataset/car/valid/images
+test: /app/object_detection/yolov8/dataset/car/test/images
