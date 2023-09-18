@@ -154,3 +154,15 @@ cython_debug/
 Pipfile*
 
 .deb
+
+/image_scraping/*
+!/image_scraping/src/
+
+/auto_annotation/*
+!/auto_annotation/src/
+
+/data_augmentation/*
+!/data_augmentation/src/
+
+/object_detection/*
+!/object_detection/src/
