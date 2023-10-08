@@ -1,0 +1,251 @@
+AWSTemplateFormatVersion: 
+  "2010-09-09"
+Description:
+  Amazon Web Services LaunchTemplate & Network & server construction
+  
+Metadata:
+  # コンソールでパラメータをグループ化およびソートする方法を定義するメタデータキー
+  "AWS::CloudFormation::Interface":
+    # パラメーターグループとそのグループに含めるパラメーターの定義
+    ParameterGroups: 
+      # Project名に関するグループ
+      - Label: 
+          default: "Project Name Prefix"
+        Parameters: 
+          - PJPrefix
+      # ネットワーク設定に関するグループ
+      - Label: 
+          default: "Network Configuration"
+        # 記述された順番に表示される
+        Parameters: 
+          - KeyName
+
+# ------------------------------------------------------------#
+# Input Parameters
+# ------------------------------------------------------------# 
+Parameters:
+  PJPrefix:
+    Type: String
+  KeyName:
+    Type: "AWS::EC2::KeyPair::KeyName"
+  MyIP:
+    Description: IP address to whitelist
+    Type: String
+  
+Resources: 
+# ------------------------------------------------------------#
+#  VPC
+# ------------------------------------------------------------#
+# VPC Create
+  VPC: 
+    Type: "AWS::EC2::VPC"
+    Properties:
+      CidrBlock: "10.0.0.0/16"
+      # VPC に対して DNS 解決がサポートされているか
+      EnableDnsSupport: "true"
+      # VPC 内に起動されるインスタンスが DNS ホスト名を取得するか
+      EnableDnsHostnames: "true"
+      # VPC 内に起動されるインスタンスの許可されているテナンシー
+      InstanceTenancy: default
+      Tags: 
+        - Key: Name
+          Value: !Sub "${PJPrefix}-vpc"
+
+# InternetGateway Create
+  InternetGateway: 
+    Type: "AWS::EC2::InternetGateway"
+    Properties: 
+      Tags: 
+        - Key: Name
+          Value: !Sub "${PJPrefix}-igw"
+
+# IGW Attach
+  InternetGatewayAttachment: 
+    Type: "AWS::EC2::VPCGatewayAttachment"
+    Properties: 
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC 
+
+# ------------------------------------------------------------#
+#  Subnet
+# ------------------------------------------------------------#          
+# Public Subnet Create
+  PublicSubnet: 
+    Type: "AWS::EC2::Subnet"
+    Properties: 
+      AvailabilityZone: "ap-northeast-1a"
+      CidrBlock:  "10.0.0.0/24"
+      VpcId: !Ref VPC 
+      Tags: 
+        - Key: Name
+          Value: !Sub "${PJPrefix}-public-subnet"
+                    
+# ------------------------------------------------------------#
+#  RouteTable
+# ------------------------------------------------------------#          
+# Public RouteTable Create
+  PublicRouteTable: 
+    Type: "AWS::EC2::RouteTable"
+    Properties: 
+      VpcId: !Ref VPC 
+      Tags: 
+        - Key: Name
+          Value: !Sub "${PJPrefix}-public-route"
+
+# ------------------------------------------------------------#
+# Routing
+# ------------------------------------------------------------# 
+# PublicRoute Create
+  PublicRoute: 
+    Type: "AWS::EC2::Route"
+    Properties: 
+      RouteTableId: !Ref PublicRouteTable 
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway 
+
+# ------------------------------------------------------------#
+# RouteTable Associate
+# ------------------------------------------------------------# 
+# PublicRouteTable Associate PublicSubnet
+  PublicSubnetRouteTableAssociation: 
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties: 
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+# ------------------------------------------------------------#
+# EC2
+# ------------------------------------------------------------#
+  # 起動テンプレート
+  Ec2InstanceLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      # 起動テンプレートの名前
+      LaunchTemplateName: !Sub "${PJPrefix}-web-server-template"
+      # 起動テンプレートの情報
+      LaunchTemplateData:
+        # リソースの作成時にリソースに適用するタグを指定
+        TagSpecifications:
+        # ------------------------------------------------------
+        # タグ付けするリソースのタイプ。
+        # 現在、作成中のタグ付けをサポートするリソースタイプは、instance および volume 
+        # ------------------------------------------------------
+        - ResourceType: instance
+          Tags:
+          - Key: Name
+            Value: !Sub "${PJPrefix}-web-server"
+        UserData:
+          Fn::Base64: |
+               #!/bin/bash
+
+               # ubuntu-drivers-commonのインストール
+               sudo apt-get update
+               sudo apt install -y ubuntu-drivers-common
+
+               # NVIVIAドライバーのインストール
+               sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-driver-525
+
+               # nvidia-dockerのインストール
+               sudo DEBIAN_FRONTEND=noninteractive apt-get -y install docker
+               curl https://get.docker.com | sh \
+               && sudo systemctl --now enable docker
+               distribution=$(. /etc/os-release;echo $ID$VERSION_ID) \
+               && curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
+               && curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
+                  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+                  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+               sudo apt-get update
+               sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nvidia-container-toolkit
+               sudo nvidia-ctk runtime configure --runtime=docker
+               sudo systemctl restart docker
+
+               # dockerグループにubuntuユーザーを追加
+               sudo gpasswd -a ubuntu docker
+
+               # OSの再起動
+               sudo systemctl reboot
+
+        KeyName: !Ref KeyName
+        ImageId: ami-0d52744d6551d851e
+        InstanceType: g4dn.xlarge
+        BlockDeviceMappings:
+        - DeviceName: "/dev/sda1"
+          Ebs:
+            VolumeSize: "30"
+        NetworkInterfaces: 
+        # IPv4 アドレスを割り当てるか
+        - AssociatePublicIpAddress: "true"
+          # ------------------------------------------------------
+          # アタッチの順序におけるネットワークインターフェイスの位置。
+          # ネットワークインターフェイスを指定する場合必須
+          # ------------------------------------------------------
+          DeviceIndex: "0"
+          SubnetId: !Ref PublicSubnet
+          Groups:
+            - !Ref WebServerSG
+
+  # WebServerセキュリティグループ
+  WebServerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: web-sg-cf
+      GroupDescription: web server sg
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MyIP
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref MyIP
+        - IpProtocol: tcp # Jupyter-labのポート8888
+          FromPort: 8888
+          ToPort: 8888
+          CidrIp: !Ref MyIP
+      Tags:
+        - Key: Name
+          Value: !Sub "${PJPrefix}-web-server-sg"
+  # EC2インスタンス
+  Ec2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      # 起動テンプレートの設定
+      LaunchTemplate:
+        # 起動テンプレートのID
+        LaunchTemplateId: !Ref 'Ec2InstanceLaunchTemplate'
+        # 起動テンプレートのバージョン番号
+        Version: !GetAtt 'Ec2InstanceLaunchTemplate.LatestVersionNumber'
+      NetworkInterfaces: 
+        # IPv4 アドレスを割り当てるか
+        - AssociatePublicIpAddress: "true"
+          # ------------------------------------------------------
+          # アタッチの順序におけるネットワークインターフェイスの位置。
+          # ネットワークインターフェイスを指定する場合必須
+          # ------------------------------------------------------
+          DeviceIndex: "0"
+          SubnetId: !Ref PublicSubnet
+          GroupSet:
+            - !Ref WebServerSG
+            
+# # # ------------------------------------------------------------#
+# # # Output Parameters
+# # # ------------------------------------------------------------#                
+Outputs:
+  VPC:
+    Value: !Ref VPC
+    Export:
+      Name: !Sub "${PJPrefix}-vpc"
+  PublicSubnet:
+    Value: !Ref PublicSubnet
+    Export:
+      Name: !Sub "${PJPrefix}-public-subnet"
+  Ec2InstanceLaunchTemplate:
+    Value: !Ref Ec2InstanceLaunchTemplate
+    Export:
+      Name: !Sub "${PJPrefix}-web-server-template"
+  Ec2Instance:
+    Value: !Ref Ec2Instance
+    Export:
+      Name: !Sub "${PJPrefix}-web-server"
