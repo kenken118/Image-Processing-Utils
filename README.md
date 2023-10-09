@@ -2,7 +2,7 @@
 
 ## Description
 
-本リポジトリは、画像処理の一蓮のパイプラインをサポートしています。<br>
+本リポジトリは、画像処理の一連のパイプラインをサポートしています。<br>
 以下の主要タスクを順番に実行することで、迅速に画像処理タスクを実行することができます。<br>
 
 1. image_scraping: インターネット上から必要な画像を収集します。
@@ -13,120 +13,81 @@
 ## Requirement
 
 - AWSアカウント
+- AWS CLIがインストールされていること
+- AWSクレデンシャル（アクセスキー, シークレットアクセスキー）
+- .pemファイル（EC2インスタンスへのSSH接続用）
 
-## Preparation
+## Configuration Notes
+CloudFormationテンプレートには、特定の設定値が事前に定義されています。以下の項目をご確認の上、必要に応じてテンプレートを適宜修正してください。
 
-### EC2 Environment Setup
+- リージョン: 現在は東京リージョン（`ap-northeast-1`）を対象としています。
+- インスタンスタイプ: 使用されるEC2インスタンスのタイプは`g4dn.xlarge`です。
+- AMIのID: 特定のUbuntuバージョンや他のOSを使用したい場合は、適切なAMI IDに変更してください。
+- ボリュームサイズ: EC2インスタンスのルートボリュームサイズは`30GB`に設定されています。
 
-AWSマネジメントコンソールからGPU搭載のEC2インスタンスタイプを起動します。<br>
-本リポジトリでは最もコスパに優れている**g4dn.xlarge**を選択して使用しています。<br>
-以下の手順を実施してください。<br>
-
-1. **Launching EC2 Instance**
-    - AWS Management Console にログインし、EC2ダッシュボードに移動します。
-    - 「インスタンスの起動」ボタンをクリックし、GPU対応のインスタンスタイプ（例：g4dn.xlarge）を選択します。
-    - 必要に応じてインスタンスの設定を行い、起動します。
-
-2. **Volume Configuration**
-    - ストレージの追加で20GBに設定します。
-    - 作成したボリュームを起動中のインスタンスにアタッチします。
-
-3. **Security Group Configuration**
-    - セキュリティグループで、SSHのポート22とJupyter-labのポート8888へのインバウンドトラフィックを許可します。
-
-### Docker Setup
-
-EC2のubuntuサーバー上にGPU対応のdocker環境を構築し、コンテナを立ち上げて使用します。<br>
-以下の手順を実施してください。<br>
-
-1. ubuntu-drivers-commonパッケージのインストール
-```
-$ sudo apt-get update
-$ sudo apt install -y ubuntu-drivers-common
-```
-
-2. NVIDIAデバイスとその関連ドライバーの情報を確認
-```
-$ lspci | grep -i nvidia
-$ ubuntu-drivers devices
-```
-
-3. NVIVIAドライバーのインストール
-```
-$ sudo apt-get install nvidia-driver-525
-```
-
-4. NVIDIAのパッケージを確認
-```
-$ dpkg -l | grep nvidia
-```
-
-5. インストール後、OSの再起動
-```
-$ sudo systemctl reboot
-```
-
-6. OSの再起動後、NVIVIAのドライバーがロードされていることを確認
-```
-$ sudo dmesg | grep -i nvidia
-```
-
-7. NVIDIAドライバーの確認
-```
-$ nvidia-smi
-```
-8. nvidia-dockerのインストール
-```
-$ sudo apt-get -y install docker
-$ curl https://get.docker.com | sh \
-  && sudo systemctl --now enable docker
-$ distribution=$(. /etc/os-release;echo $ID$VERSION_ID) \
-      && curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
-      && curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
-            sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-            sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-$ sudo apt-get update
-$ sudo apt-get install -y nvidia-container-toolkit
-$ sudo nvidia-ctk runtime configure --runtime=docker
-$ sudo systemctl restart docker
-```
-
-9. nvidia-docker上でcudaとcudnnが認識できているかの確認
-```
-$ sudo docker run --rm --gpus all nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04 nvidia-smi
-```
-
-10. dockerグループにubuntuユーザーを追加
-```
-$ sudo gpasswd -a ubuntu docker
-```
-上記の変更を有効にするために、ログアウト（exit）して再度SSHでログインしてください。<br>
-
-### Repository Setup
-
-以下コマンドを使用して、`/home/ubuntu/`配下に本リポジトリをcloneします。
+## Usage
+以下の手順に従って、本リポジトリをセットアップおよびデプロイしてください。<br>
+1. リポジトリのclone<br>
+ローカルマシンに本リポジトリをcloneします。
 ```
 $ git clone https://github.com/kenken118/Image-Processing-Utils
 ```
-これで準備は完了です。<br>
 
-## Usage
-以下の手順を実施してください。<br>
-1. ビルドコンテキストのあるディレクトリに移動
+2. ディレクトリの移動
 ```
 $ cd Image-Processing-Utils
 ```
 
-2. Dockerイメージのビルド
+3. AWS CLIの設定<br>
+アクセスキー、シークレットアクセスキー、リージョン、出力形式を入力する必要があります。
+```
+$ aws configure
+```
+注意：リージョンは東京リージョン（`ap-northeast-1`）を指定してください。
+
+4. 環境変数のエクスポート<br>
+`.pem`拡張子を除いたキーペアの名前を設定します。
+```
+$ export AWS_KEY_NAME={pemファイル名}
+```
+
+5. デプロイの実行<br>
+`deploy.sh`を実行します。このスクリプトはAWS CloudFormationを使用してリソースをデプロイします。
+```
+$ ./deploy.sh
+```
+注意：CloudFormationでのスタックの展開は、Docker環境の構築も含めて実行されるため、少し時間がかかります。完了まで2~3分ほどお待ちください。
+
+6. EC2へのSSH接続<br>
+デプロイが完了したら、起動したEC2インスタンスにSSH接続します。AWS Management ConsoleのEC2ダッシュボードから該当インスタンスの「パブリックIpV4DNS」を確認します。
+```
+$ ssh -i /path/to/＄{AWS_KEY_NAME}.pem ubuntu@{パブリックIpV4DNS}
+```
+
+7. リモートホストへのリポジトリのclone<br>
+接続先のEC2インスタンスに本リポジトリをcloneします。
+```
+$ git clone https://github.com/kenken118/Image-Processing-Utils
+```
+
+8. ディレクトリの移動
+```
+$ cd Image-Processing-Utils
+```
+
+9. Dockerイメージのビルド
 ```
 $ docker compose build
 ```
 
-3. Dockerコンテナをバックグラウンドで起動
+10. Dockerコンテナをバックグラウンドで起動
 ```
 $ docker compose up -d
 ```
 
-4. アプリケーションへのアクセス
-Webブラウザを開き、以下のアドレスにアクセスする。<br>
-`{起動中のEC2インスタンスのパブリックIPv4DNS}:8888`
+11. jupyter-labに接続<br>
+コンテナの起動が完了したら、webブラウザを開いて以下のURLにアクセスし、jupyter-labに接続します。
+```
+http://{パブリックIpV4DNS}:8888
+```
+注意：使用が終わったら、AWS Management ConsoleのCloudFormationダッシュボードから`dev-stack`というスタックを削除してください。
