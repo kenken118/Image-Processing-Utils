@@ -45,7 +45,8 @@ $ aws configure
 ```
 注意：リージョンは東京リージョン（`ap-northeast-1`）を指定してください。
 
-4. 環境変数のエクスポート
+4. 環境変数のエクスポート<br>
+`.pem`拡張子を除いたキーペアの名前を設定します。
 ```
 $ export AWS_KEY_NAME={pemファイル名}
 ```
@@ -60,7 +61,7 @@ $ ./deploy.sh
 6. EC2へのSSH接続<br>
 デプロイが完了したら、起動したEC2インスタンスにSSH接続します。AWS Management ConsoleのEC2ダッシュボードから該当インスタンスの「パブリックIpV4DNS」を確認します。
 ```
-$ ssh -i {pemファイル名} ubuntu@{パブリックIpV4DNS}
+$ ssh -i /path/to/＄{AWS_KEY_NAME}.pem ubuntu@{パブリックIpV4DNS}
 ```
 
 7. リモートホストへのリポジトリのclone<br>
